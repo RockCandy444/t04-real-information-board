@@ -19,6 +19,7 @@ const normalFixtures = [
   { id: "T04-NORMAL-D1-B", label: "같은 날 갱신" },
   { id: "T04-NORMAL-D2", label: "다음 날 새 기록" },
 ] as const;
+const SOURCE_URL = "https://api.open-meteo.com/v1/forecast?latitude=36.3504&longitude=127.3845&current_weather=true&timezone=Asia%2FSeoul";
 
 function formatKst(value: string) { return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Seoul" }).format(new Date(value)); }
 
@@ -35,9 +36,24 @@ export default function InformationBoard() {
 
   async function refreshLive() {
     setLoading(true); setMessage("Open-Meteo에서 대전 기온을 확인하고 있습니다.");
-    try { const response = await fetch("/api/readings", { method: "POST" }); const data = await response.json(); setReadings(data.readings ?? []); setFreshness(data.freshness ?? "stale"); if (!response.ok) throw new Error(data.message); setMessage("새 값을 확인해 오늘의 기록을 저장했습니다."); }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      const sourceResponse = await fetch(SOURCE_URL, { headers: { accept: "application/json" }, signal: controller.signal, cache: "no-store" });
+      if (!sourceResponse.ok) throw new Error(`외부 원천 조회 실패 (${sourceResponse.status})`);
+      const sourcePayload = await sourceResponse.json();
+      const response = await fetch("/api/readings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ source_payload: sourcePayload }),
+      });
+      const data = await response.json();
+      setReadings(data.readings ?? []); setFreshness(data.freshness ?? "stale");
+      if (!response.ok) throw new Error(data.message);
+      setMessage("새 값을 확인해 오늘의 기록을 저장했습니다.");
+    }
     catch (error) { setFreshness("stale"); setMessage(error instanceof Error ? error.message : "마지막 정상값을 보존했습니다."); }
-    finally { setLoading(false); }
+    finally { clearTimeout(timeout); setLoading(false); }
   }
 
   function replayFailure(item: (typeof failures)[number]) { setReplay({ ...initialReplay, freshness: "stale", errorCode: item.code, label: item.note }); }

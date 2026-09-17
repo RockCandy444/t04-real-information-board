@@ -45,22 +45,15 @@ export async function GET() {
   }
 }
 
-export async function POST() {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-  let stage = "fetch";
+export async function POST(request: Request) {
+  let stage = "validate";
   try {
-    const response = await fetch(SOURCE_URL, {
-      headers: { accept: "application/json", "user-agent": "T04-Real-Information-Board/1.0" },
-      signal: controller.signal,
-      cache: "no-store",
-    });
-    if (!response.ok) throw new Error(`upstream_${response.status}`);
-    const raw = (await response.json()) as {
+    const body = (await request.json()) as { source_payload?: unknown };
+    if (!body || typeof body.source_payload !== "object" || body.source_payload === null) throw new Error("schema_error");
+    const raw = body.source_payload as {
       current_weather?: { time?: unknown; temperature?: unknown };
       current_weather_units?: { temperature?: unknown };
     };
-    stage = "normalize";
     const value = raw.current_weather?.temperature;
     const unit = raw.current_weather_units?.temperature ?? "°C";
     if (typeof value !== "number" || typeof unit !== "string") throw new Error("schema_error");
@@ -125,20 +118,12 @@ export async function POST() {
       message: error instanceof Error ? error.message : "unknown_error",
     });
     const code =
-      error instanceof DOMException && error.name === "AbortError"
-        ? "timeout"
-        : error instanceof Error && error.message === "schema_error"
+      error instanceof Error && error.message === "schema_error"
           ? "schema_error"
-          : error instanceof Error && /upstream_(401|403)/.test(error.message)
-            ? "auth"
-            : error instanceof Error && error.message === "upstream_429"
-              ? "rate_limit"
-              : "offline";
+          : "offline";
     return Response.json(
       { freshness: "stale", error_code: code, message: `${stage} 단계에서 새 값을 받지 못해 마지막 정상 기록을 그대로 보존했습니다.`, readings: await listReadings().catch(() => []) },
       { status: 502 },
     );
-  } finally {
-    clearTimeout(timeout);
   }
 }
